@@ -91,6 +91,43 @@ async function run() {
                 });
             }
         });
+        // update ticket API
+        app.patch('/tickets/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const updatedData = req.body;
+
+                // If departureDate or departureTime changes, rebuild full datetime
+                if (updatedData.departureDate && updatedData.departureTime) {
+                    updatedData.departureDateTime = new Date(`${updatedData.departureDate}T${updatedData.departureTime}:00`);
+                }
+
+                const result = await ticketsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updatedData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Ticket not found"
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: "Ticket updated successfully"
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to update ticket",
+                    error: error.message
+                });
+            }
+        });
+
 
 
         // FTWgCKOuqsDWy9Af
