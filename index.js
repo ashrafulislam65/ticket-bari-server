@@ -25,6 +25,7 @@ async function run() {
 
         const db = client.db('ticket_bari_DB');
         const ticketsCollection = db.collection('tickets');
+        // ticket related APIs
         app.post('/tickets', async (req, res) => {
             try {
                 const newTicket = req.body;
@@ -46,6 +47,25 @@ async function run() {
                 });
             }
         });
+        app.get('/tickets', async (req, res) => {
+            try {
+                const tickets = await ticketsCollection.find().toArray();
+
+                res.json({
+                    success: true,
+                    count: tickets.length,
+                    data: tickets
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to fetch tickets",
+                    error: error.message
+                });
+            }
+        });
+
 
         // FTWgCKOuqsDWy9Af
         // ticket_bari_user
