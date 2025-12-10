@@ -2,7 +2,7 @@ const express = require('express')
 const cors = require('cors')
 const app = express();
 require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000
 // middlewares
 app.use(express.json())
@@ -61,6 +61,32 @@ async function run() {
                 res.status(500).json({
                     success: false,
                     message: "Failed to fetch tickets",
+                    error: error.message
+                });
+            }
+        });
+        //  specific ticket API
+        app.get('/tickets/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!ticket) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Ticket not found"
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    data: ticket
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to fetch ticket",
                     error: error.message
                 });
             }
