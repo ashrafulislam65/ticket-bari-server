@@ -127,6 +127,33 @@ async function run() {
                 });
             }
         });
+        //  Delete ticket API
+        app.delete('/tickets/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const result = await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Ticket not found"
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: "Ticket deleted successfully"
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to delete ticket",
+                    error: error.message
+                });
+            }
+        });
 
 
 
