@@ -25,6 +25,7 @@ async function run() {
 
         const db = client.db('ticket_bari_DB');
         const ticketsCollection = db.collection('tickets');
+        const bookingsCollection = db.collection('bookings');
         // ticket related APIs
         app.post('/tickets', async (req, res) => {
             try {
@@ -154,7 +155,61 @@ async function run() {
                 });
             }
         });
+        // ticket Booking related APIs 
+        app.post('/bookings', async (req, res) => {
+            const { ticketId, userEmail, quantity } = req.body;
 
+            // 1. Load the main ticket
+            const ticket = await ticketsCollection.findOne({ _id: new ObjectId(ticketId) });
+            if (!ticket) {
+                return res.status(404).json({ message: "Ticket not found" });
+            }
+
+            // 2. Check if ticket is expired
+            const departure = new Date(ticket.departureTime);
+            if (departure < new Date()) {
+                return res.status(400).json({ message: "Departure time already passed!" });
+            }
+
+            // 3. Check ticket quantity
+            if (ticket.quantity === 0) {
+                return res.status(400).json({ message: "Ticket is out of stock" });
+            }
+
+            if (quantity > ticket.quantity) {
+                return res.status(400).json({ message: "Not enough tickets available" });
+            }
+
+            // 4. Create booking entry
+            const newBooking = {
+                ticketId,
+                title: ticket.title,
+                transport: ticket.transport,
+                from: ticket.from,
+                to: ticket.to,
+                departureTime: ticket.departureTime,
+                price: ticket.price,
+                quantity,
+                totalPrice: ticket.price * quantity,
+                userEmail,
+                status: "Pending",
+                bookedAt: new Date()
+            };
+
+            const bookingResult = await bookingsCollection.insertOne(newBooking);
+
+            // 5. Reduce ticket quantity
+            await ticketsCollection.updateOne(
+                { _id: new ObjectId(ticketId) },
+                { $inc: { quantity: -quantity } }
+            );
+
+            res.json({
+                message: "Booking successful!",
+                bookingId: bookingResult.insertedId
+            });
+        });
+        
 
 
         // FTWgCKOuqsDWy9Af
