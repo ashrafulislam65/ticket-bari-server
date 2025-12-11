@@ -173,19 +173,21 @@ async function run() {
         app.post('/bookings', async (req, res) => {
             const { ticketId, userEmail, quantity } = req.body;
 
-            // 1. Load the main ticket
+            // 1. Load main ticket
             const ticket = await ticketsCollection.findOne({ _id: new ObjectId(ticketId) });
             if (!ticket) {
                 return res.status(404).json({ message: "Ticket not found" });
             }
 
-            // 2. Check if ticket is expired
-            const departure = new Date(ticket.departureTime);
-            if (departure < new Date()) {
+            // Build full departure datetime
+            const departureDateTime = new Date(`${ticket.departureDate}T${ticket.departureTime}:00`);
+
+            // 2. Check if event expired
+            if (departureDateTime < new Date()) {
                 return res.status(400).json({ message: "Departure time already passed!" });
             }
 
-            // 3. Check ticket quantity
+            // 3. Quantity check
             if (ticket.quantity === 0) {
                 return res.status(400).json({ message: "Ticket is out of stock" });
             }
@@ -201,7 +203,12 @@ async function run() {
                 transport: ticket.transport,
                 from: ticket.from,
                 to: ticket.to,
+
+                // FIXED 🚀 Save full schedule
+                departureDate: ticket.departureDate,
                 departureTime: ticket.departureTime,
+                departureDateTime, // saved as ISO date
+
                 price: ticket.price,
                 quantity,
                 totalPrice: ticket.price * quantity,
@@ -219,10 +226,49 @@ async function run() {
             );
 
             res.json({
+                success: true,
                 message: "Booking successful!",
                 bookingId: bookingResult.insertedId
             });
         });
+        // Vendor related APIs can be added here
+        // GET vendor requested bookings
+        app.get("/vendor/bookings", async (req, res) => {
+            try {
+                const vendorEmail = req.query.vendorEmail;
+
+                if (!vendorEmail) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "vendorEmail is required",
+                    });
+                }
+
+                // 1. Get all tickets created by this vendor
+                const vendorTickets = await ticketsCollection
+                    .find({ vendorEmail })
+                    .project({ _id: 1 }) // only need ticket IDs
+                    .toArray();
+
+                const ticketIds = vendorTickets.map(t => t._id.toString());
+
+                // 2. Find all bookings for these tickets
+                const bookings = await bookingsCollection
+                    .find({ ticketId: { $in: ticketIds } })
+                    .toArray();
+
+                res.json({
+                    success: true,
+                    count: bookings.length,
+                    data: bookings,
+                });
+
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+
 
 
 
