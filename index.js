@@ -155,7 +155,21 @@ async function run() {
                 });
             }
         });
-        // ticket Booking related APIs 
+        // ticket Booking related APIs
+        app.get('/bookings', async (req, res) => {
+            const { userEmail } = req.query;
+
+            if (!userEmail) {
+                return res.send("userEmail is required");
+            }
+
+            const bookings = await bookingsCollection
+                .find({ userEmail })
+                .toArray();
+
+            res.send(bookings);
+        });
+
         app.post('/bookings', async (req, res) => {
             const { ticketId, userEmail, quantity } = req.body;
 
@@ -209,7 +223,7 @@ async function run() {
                 bookingId: bookingResult.insertedId
             });
         });
-        
+
 
 
         // FTWgCKOuqsDWy9Af
