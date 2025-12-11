@@ -267,6 +267,45 @@ async function run() {
                 res.status(500).json({ error: error.message });
             }
         });
+        // ACCEPT booking
+        app.patch("/bookings/accept/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const result = await bookingsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: "accepted" } }
+                );
+
+                res.json({
+                    success: true,
+                    message: "Booking accepted!",
+                });
+
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+        // REJECT booking
+        app.patch("/bookings/reject/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const result = await bookingsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status: "rejected" } }
+                );
+
+                res.json({
+                    success: true,
+                    message: "Booking rejected!",
+                });
+
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
 
 
 
