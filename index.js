@@ -4,9 +4,37 @@ const app = express();
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./ticket-bari-firebase-adminsdk-fbsvc.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
 // middlewares
 app.use(express.json())
 app.use(cors());
+
+const verifyFBToken = async (req, res, next) => {
+
+    const token = req.headers.authorization;
+    if (!token) {
+        return res.status(401).send({ message: "Unauthorized access" });
+    }
+    try {
+        const idToken = token.split(' ')[1];
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        console.log('decoded token', decoded);
+        req.decoded_email = decoded.email;
+
+    }
+    catch (err) {
+        return res.status(401).send({ message: "Unauthorized access" });
+
+    }
+    next();
+}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fcejyck.mongodb.net/?appName=Cluster0`;
 const stripe = require('stripe')(process.env.STRIPE_SECRET);
@@ -352,9 +380,12 @@ async function run() {
                 ],
                 customer_email: paymentInfo.userEmail,
                 mode: 'payment',
+
                 metadata: {
-                    bookingId: paymentInfo.bookingId,   // 🔥 FIXED
+                    bookingId: paymentInfo.bookingId,
+                    ticketTitle: paymentInfo.ticketTitle  // IMPORTANT
                 },
+
                 success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
                 cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
             });
@@ -363,57 +394,78 @@ async function run() {
         });
 
 
-        
+
         // VERIFY payment and update booking status + SAVE history
         app.post("/payment/success", async (req, res) => {
             try {
                 const { sessionId } = req.body;
 
-                // Retrieve session from Stripe
+                // Load Stripe session
                 const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-                // Read bookingId from Stripe metadata
                 const bookingId = session.metadata.bookingId;
                 const ticketTitle = session.metadata.ticketTitle;
 
-                // 1. Update Booking to PAID
+                // 1. Update Booking Status
                 await bookingsCollection.updateOne(
                     { _id: new ObjectId(bookingId) },
                     { $set: { status: "paid" } }
                 );
 
-                // 2. SAVE Payment History
+                // 2. Save Transaction History
                 const paymentData = {
                     transactionId: session.payment_intent,
                     amount: session.amount_total / 100,
                     userEmail: session.customer_email,
-                    ticketTitle,
+                    ticketTitle: ticketTitle,
                     date: new Date()
                 };
+                // --- Prevent duplicate transaction entry ---
+                const existing = await paymentsCollection.findOne({
+                    transactionId: session.payment_intent
+                });
+
+                if (existing) {
+                    return res.json({ success: true, message: "Already processed" });
+                }
 
                 await paymentsCollection.insertOne(paymentData);
 
-                res.json({ success: true, message: "Payment Saved & Booking Updated!" });
+                res.json({ success: true, message: "Payment saved & booking updated" });
 
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
         });
 
-        app.get("/payments", async (req, res) => {
+
+        app.get("/payments", verifyFBToken, async (req, res) => {
             const { email } = req.query;
 
+            // 1️⃣ Must include email
             if (!email) {
                 return res.status(400).json({ message: "email is required" });
             }
 
-            const payments = await db.collection("payments")
-                .find({ userEmail: email })
-                .sort({ date: -1 })
-                .toArray();
+            // 2️⃣ Must match Firebase decoded email
+            if (email !== req.decoded_email) {
+                return res.status(403).send({ message: "forbidden access" });
+            }
 
-            res.json(payments);
+            try {
+                // 3️⃣ Fetch only current user payments
+                const payments = await paymentsCollection
+                    .find({ userEmail: email })
+                    .sort({ date: -1 })
+                    .toArray();
+
+                res.json(payments);
+
+            } catch (error) {
+                res.status(500).json({ message: "Failed to fetch payments", error: error.message });
+            }
         });
+
 
 
 
