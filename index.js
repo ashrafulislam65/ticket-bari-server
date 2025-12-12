@@ -9,6 +9,7 @@ app.use(express.json())
 app.use(cors());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fcejyck.mongodb.net/?appName=Cluster0`;
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
     serverApi: {
@@ -304,6 +305,63 @@ async function run() {
             } catch (error) {
                 res.status(500).json({ error: error.message });
             }
+        });
+        // Get a specific booking by ID
+        app.get("/bookings/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const booking = await bookingsCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!booking) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Booking not found",
+                    });
+                }
+
+                res.json(booking);
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    error: error.message,
+                });
+            }
+        });
+        // payment related APIs can be added here
+        app.post('/create-checkout-session', async (req, res) => {
+            const paymentInfo = req.body;
+            const amount = parseInt(paymentInfo.totalPrice)*100; // in cents
+            const session = await stripe.checkout.sessions.create({
+                line_items: [
+                    {
+                        
+                        price_data: {
+                            currency: 'usd',
+                            unit_amount: amount, // in cents
+                            product_data: {
+                                name: paymentInfo.ticketTitle,
+                            },
+
+                        },
+                        
+                        quantity: 1,
+                    },
+                ],
+                customer_email: paymentInfo.userEmail,
+                mode: 'payment',
+                metadata: {
+                    bookingId: paymentInfo.bookingId,
+
+                },
+                success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+                cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+            });
+            console.log(session);
+            res.send({url: session.url});
         });
 
 
