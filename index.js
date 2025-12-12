@@ -54,14 +54,72 @@ async function run() {
 
         const db = client.db('ticket_bari_DB');
         const usersCollection = db.collection('users');
+        const vendorRequestsCollection = db.collection('vendor_requests');
         const ticketsCollection = db.collection('tickets');
         const bookingsCollection = db.collection('bookings');
         const paymentsCollection = db.collection('payments');
+        app.post("/vendor-request", verifyFBToken, async (req, res) => {
+            const data = req.body;
+
+            // Prevent duplicate request
+            const exist = await vendorRequestsCollection.findOne({
+                email: data.email,
+                requestStatus: "pending"
+            });
+
+            if (exist) {
+                return res.send({ message: "Request already submitted" });
+            }
+
+            const result = await vendorRequestsCollection.insertOne(data);
+            res.send(result);
+        });
+        // ==========================================
+        // GET All Vendor Requests (Only Admin Access)
+        // ==========================================
+        app.get("/vendor-request", verifyFBToken, async (req, res) => {
+            try {
+                const email = req.decoded_email;
+
+                // Check user role
+                const user = await usersCollection.findOne({ email });
+
+                if (!user || user.role !== "admin") {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                // Fetch all vendor requests
+                const requests = await vendorRequestsCollection
+                    .find()
+                    .sort({ requestDate: -1 })
+                    .toArray();
+
+                res.json({
+                    success: true,
+                    count: requests.length,
+                    data: requests
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to load vendor requests",
+                    error: error.message
+                });
+            }
+        });
+
+
         // user related APIs
         app.post('/users', async (req, res) => {
             const user = req.body;
             user.role = 'user'; // default role
             user.createdAt = new Date();
+            const email = user.email;
+            const userExists = await usersCollection.findOne({ email });
+            if (userExists) {
+                return res.send({ message: 'User already exists' });
+            }
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
