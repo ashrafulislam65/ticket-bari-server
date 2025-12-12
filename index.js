@@ -53,9 +53,18 @@ async function run() {
 
 
         const db = client.db('ticket_bari_DB');
+        const usersCollection = db.collection('users');
         const ticketsCollection = db.collection('tickets');
         const bookingsCollection = db.collection('bookings');
         const paymentsCollection = db.collection('payments');
+        // user related APIs
+        app.post('/users', async (req, res) => {
+            const user = req.body;
+            user.role = 'user'; // default role
+            user.createdAt = new Date();
+            const result = await usersCollection.insertOne(user);
+            res.send(result);
+        });
         // ticket related APIs
         app.post('/tickets', async (req, res) => {
             try {
