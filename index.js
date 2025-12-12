@@ -27,6 +27,7 @@ async function run() {
         const db = client.db('ticket_bari_DB');
         const ticketsCollection = db.collection('tickets');
         const bookingsCollection = db.collection('bookings');
+        const paymentsCollection = db.collection('payments');
         // ticket related APIs
         app.post('/tickets', async (req, res) => {
             try {
@@ -334,36 +335,85 @@ async function run() {
         // payment related APIs can be added here
         app.post('/create-checkout-session', async (req, res) => {
             const paymentInfo = req.body;
-            const amount = parseInt(paymentInfo.totalPrice)*100; // in cents
+            const amount = parseInt(paymentInfo.totalPrice) * 100;
+
             const session = await stripe.checkout.sessions.create({
                 line_items: [
                     {
-                        
                         price_data: {
                             currency: 'usd',
-                            unit_amount: amount, // in cents
+                            unit_amount: amount,
                             product_data: {
                                 name: paymentInfo.ticketTitle,
                             },
-
                         },
-                        
                         quantity: 1,
                     },
                 ],
                 customer_email: paymentInfo.userEmail,
                 mode: 'payment',
                 metadata: {
-                    bookingId: paymentInfo.bookingId,
-
+                    bookingId: paymentInfo.bookingId,   // 🔥 FIXED
                 },
-                success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success`,
+                success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
                 cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
             });
-            console.log(session);
-            res.send({url: session.url});
+
+            res.send({ url: session.url });
         });
 
+
+        
+        // VERIFY payment and update booking status + SAVE history
+        app.post("/payment/success", async (req, res) => {
+            try {
+                const { sessionId } = req.body;
+
+                // Retrieve session from Stripe
+                const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+                // Read bookingId from Stripe metadata
+                const bookingId = session.metadata.bookingId;
+                const ticketTitle = session.metadata.ticketTitle;
+
+                // 1. Update Booking to PAID
+                await bookingsCollection.updateOne(
+                    { _id: new ObjectId(bookingId) },
+                    { $set: { status: "paid" } }
+                );
+
+                // 2. SAVE Payment History
+                const paymentData = {
+                    transactionId: session.payment_intent,
+                    amount: session.amount_total / 100,
+                    userEmail: session.customer_email,
+                    ticketTitle,
+                    date: new Date()
+                };
+
+                await paymentsCollection.insertOne(paymentData);
+
+                res.json({ success: true, message: "Payment Saved & Booking Updated!" });
+
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        app.get("/payments", async (req, res) => {
+            const { email } = req.query;
+
+            if (!email) {
+                return res.status(400).json({ message: "email is required" });
+            }
+
+            const payments = await db.collection("payments")
+                .find({ userEmail: email })
+                .sort({ date: -1 })
+                .toArray();
+
+            res.json(payments);
+        });
 
 
 
