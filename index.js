@@ -58,6 +58,72 @@ async function run() {
         const ticketsCollection = db.collection('tickets');
         const bookingsCollection = db.collection('bookings');
         const paymentsCollection = db.collection('payments');
+        // middleware more with database access
+        const verifyAdmin =async(req, res, next) => {
+            const email = req.decoded_email;
+            const query = { email };
+            const user = await usersCollection.findOne(query);
+            if (!user || user.role !== 'admin') {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+
+            next();
+        }
+      
+        app.get('/users/:email/role',verifyFBToken, async(req, res) => {
+            const email = req.params.email;
+            const Query = { email };
+            const user = await usersCollection.findOne(Query);
+            res.send({ role: user?.role || 'user' });
+        });
+        // MARK vendor as FRAUD
+        app.patch("/users/mark-fraud/:email", verifyFBToken, async (req, res) => {
+            const adminEmail = req.decoded_email;
+            const admin = await usersCollection.findOne({ email: adminEmail });
+
+            if (!admin || admin.role !== "admin") {
+                return res.status(403).json({ message: "Forbidden access" });
+            }
+
+            const email = req.params.email;
+
+            // 1) Update user role
+            await usersCollection.updateOne(
+                { email },
+                { $set: { role: "fraud" } }
+            );
+
+            // 2) Hide all tickets of this vendor
+            await ticketsCollection.updateMany(
+                { vendorEmail: email },
+                { $set: { status: "hidden" } }
+            );
+
+            res.json({
+                success: true,
+                message: "Vendor marked as FRAUD & tickets hidden"
+            });
+        });
+        // MAKE vendor by email
+        app.patch("/users/make-vendor/:email", verifyFBToken, async (req, res) => {
+            const adminEmail = req.decoded_email;
+            const admin = await usersCollection.findOne({ email: adminEmail });
+
+            if (!admin || admin.role !== "admin") {
+                return res.status(403).json({ message: "Forbidden access" });
+            }
+
+            const email = req.params.email;
+
+            const result = await usersCollection.updateOne(
+                { email },
+                { $set: { role: "vendor" } }
+            );
+
+            res.send(result);
+        });
+
+
         app.post("/vendor-request", verifyFBToken, async (req, res) => {
             const data = req.body;
 
@@ -74,6 +140,70 @@ async function run() {
             const result = await vendorRequestsCollection.insertOne(data);
             res.send(result);
         });
+        // Update user role (Admin Only)
+        app.patch("/users/role/:id", verifyFBToken,verifyAdmin, async (req, res) => {
+            try {
+                const userId = req.params.id;
+                const { role } = req.body;
+
+                // Check admin permission
+                const adminEmail = req.decoded_email;
+                const adminUser = await usersCollection.findOne({ email: adminEmail });
+
+                if (!adminUser || adminUser.role !== "admin") {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                const result = await usersCollection.updateOne(
+                    { _id: new ObjectId(userId) },
+                    { $set: { role } }
+                );
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).send({ message: "Error updating user role" });
+            }
+        });
+
+
+        // Approve Vendor Request
+        app.patch("/vendor-request/approve/:id", verifyFBToken, async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                // Admin check
+                const adminEmail = req.decoded_email;
+                const adminUser = await usersCollection.findOne({ email: adminEmail });
+
+                if (!adminUser || adminUser.role !== "admin") {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                const result = await vendorRequestsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { requestStatus: "approved" } }
+                );
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).send({ message: "Error approving vendor request" });
+            }
+        });
+
+
+
+        // Reject Vendor Request
+        app.patch("/vendor-request/reject/:id", verifyFBToken, async (req, res) => {
+            const id = req.params.id;
+
+            const result = await vendorRequestsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { requestStatus: "rejected" } }
+            );
+
+            res.send(result);
+        });
+
         // ==========================================
         // GET All Vendor Requests (Only Admin Access)
         // ==========================================
@@ -88,9 +218,9 @@ async function run() {
                     return res.status(403).json({ message: "Forbidden access" });
                 }
 
-                // Fetch all vendor requests
+                // Fetch only pending vendor requests
                 const requests = await vendorRequestsCollection
-                    .find()
+                    .find({ requestStatus: "pending" })
                     .sort({ requestDate: -1 })
                     .toArray();
 
@@ -110,7 +240,36 @@ async function run() {
         });
 
 
+
         // user related APIs
+        // ========== GET All Users (Admin Only) ==========
+        app.get("/users", verifyFBToken, async (req, res) => {
+            try {
+                const email = req.decoded_email;
+
+                // Check if admin
+                const adminUser = await usersCollection.findOne({ email });
+                if (!adminUser || adminUser.role !== "admin") {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                const users = await usersCollection.find().toArray();
+
+                res.json({
+                    success: true,
+                    count: users.length,
+                    data: users
+                });
+
+            } catch (error) {
+                res.status(500).json({
+                    success: false,
+                    message: "Failed to load users",
+                    error: error.message
+                });
+            }
+        });
+
         app.post('/users', async (req, res) => {
             const user = req.body;
             user.role = 'user'; // default role
@@ -124,11 +283,30 @@ async function run() {
             res.send(result);
         });
         // ticket related APIs
-        app.post('/tickets', async (req, res) => {
+        app.post('/tickets', verifyFBToken, async (req, res) => {
             try {
                 const newTicket = req.body;
 
-                // Just insert
+                // Load user
+                const user = await usersCollection.findOne({ email: req.decoded_email });
+
+                // If fraud vendor -> block
+                if (user.role === "fraud") {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Your account is marked as FRAUD. You cannot add tickets."
+                    });
+                }
+
+                // Only vendors should be allowed to add tickets
+                if (user.role !== "vendor") {
+                    return res.status(403).json({
+                        success: false,
+                        message: "Only vendors can add tickets"
+                    });
+                }
+
+                // Insert ticket
                 const result = await ticketsCollection.insertOne(newTicket);
 
                 res.json({
@@ -145,9 +323,12 @@ async function run() {
                 });
             }
         });
+
         app.get('/tickets', async (req, res) => {
             try {
-                const tickets = await ticketsCollection.find().toArray();
+                const tickets = await ticketsCollection
+                    .find({ status: { $ne: "hidden" } }) // HIDE hidden tickets
+                    .toArray();
 
                 res.json({
                     success: true,
@@ -163,6 +344,7 @@ async function run() {
                 });
             }
         });
+
         //  specific ticket API
         app.get('/tickets/:id', async (req, res) => {
             try {
@@ -330,7 +512,7 @@ async function run() {
         });
         // Vendor related APIs can be added here
         // GET vendor requested bookings
-        app.get("/vendor/bookings", async (req, res) => {
+        app.get("/vendor/bookings",verifyFBToken, async (req, res) => {
             try {
                 const vendorEmail = req.query.vendorEmail;
 
