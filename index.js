@@ -59,7 +59,7 @@ async function run() {
         const bookingsCollection = db.collection('bookings');
         const paymentsCollection = db.collection('payments');
         // middleware more with database access
-        const verifyAdmin =async(req, res, next) => {
+        const verifyAdmin = async (req, res, next) => {
             const email = req.decoded_email;
             const query = { email };
             const user = await usersCollection.findOne(query);
@@ -69,8 +69,67 @@ async function run() {
 
             next();
         }
-      
-        app.get('/users/:email/role',verifyFBToken, async(req, res) => {
+        const verifyVendor = async (req, res, next) => {
+            const email = req.decoded_email;
+            const query = { email };
+            const user = await usersCollection.findOne(query);
+            if (!user || user.role !== 'vendor') {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+
+            next();
+        }
+        app.get("/admin/approved-tickets", verifyFBToken, verifyAdmin, async (req, res) => {
+            const tickets = await ticketsCollection.find({
+                verificationStatus: "approved"
+            }).toArray();
+
+            res.send(tickets);
+        });
+       
+        app.patch("/admin/tickets/advertise/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { advertise } = req.body; // true / false
+
+                // Count currently advertised tickets
+                const advertisedCount = await ticketsCollection.countDocuments({
+                    isAdvertised: true
+                });
+
+                // ❌ limit exceeded
+                if (advertise === true && advertisedCount >= 6) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "You can advertise maximum 6 tickets only"
+                    });
+                }
+
+                await ticketsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { isAdvertised: advertise } }
+                );
+
+                res.json({
+                    success: true,
+                    message: advertise ? "Ticket advertised" : "Ticket unadvertised"
+                });
+
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+        app.get("/advertised-tickets", async (req, res) => {
+            const tickets = await ticketsCollection.find({
+                isAdvertised: true,
+                verificationStatus: "approved",
+                status: { $ne: "hidden" }
+            }).limit(6).toArray();
+
+            res.send(tickets);
+        });
+
+        app.get('/users/:email/role', verifyFBToken, async (req, res) => {
             const email = req.params.email;
             const Query = { email };
             const user = await usersCollection.findOne(Query);
@@ -123,6 +182,37 @@ async function run() {
             res.send(result);
         });
 
+        // Vendor Revenue Overview
+        app.get('/vendor/revenue-overview', verifyFBToken,verifyVendor, async (req, res) => {
+            try {
+                const vendorEmail = req.decoded_email;
+
+                // 1. Get all tickets added by this vendor
+                const tickets = await ticketsCollection.find({ vendorEmail }).toArray();
+
+                const totalTicketsAdded = tickets.length;
+
+                // 2. Get all bookings for this vendor's tickets
+                const ticketIds = tickets.map(t => t._id.toString());
+                const bookings = await bookingsCollection.find({
+                    ticketId: { $in: ticketIds },
+                    status: "paid" // Only consider paid bookings for revenue
+                }).toArray();
+
+                const totalTicketsSold = bookings.reduce((sum, b) => sum + b.quantity, 0);
+                const totalRevenue = bookings.reduce((sum, b) => sum + b.totalPrice, 0);
+
+                res.json({
+                    totalRevenue,
+                    totalTicketsSold,
+                    totalTicketsAdded
+                });
+
+            } catch (err) {
+                console.error(err);
+                res.status(500).json({ message: "Failed to fetch revenue overview", error: err.message });
+            }
+        });
 
         app.post("/vendor-request", verifyFBToken, async (req, res) => {
             const data = req.body;
@@ -141,7 +231,7 @@ async function run() {
             res.send(result);
         });
         // Update user role (Admin Only)
-        app.patch("/users/role/:id", verifyFBToken,verifyAdmin, async (req, res) => {
+        app.patch("/users/role/:id", verifyFBToken, verifyAdmin, async (req, res) => {
             try {
                 const userId = req.params.id;
                 const { role } = req.body;
@@ -283,7 +373,17 @@ async function run() {
             res.send(result);
         });
         // ticket related APIs
-        app.post('/tickets', verifyFBToken, async (req, res) => {
+        app.get("/vendor/tickets", verifyFBToken,verifyVendor, async (req, res) => {
+            const email = req.decoded_email;
+
+            const tickets = await ticketsCollection.find({
+                vendorEmail: email
+            }).toArray();
+
+            res.send(tickets);
+        });
+
+        app.post('/tickets', verifyFBToken,verifyVendor, async (req, res) => {
             try {
                 const newTicket = req.body;
 
@@ -305,6 +405,11 @@ async function run() {
                         message: "Only vendors can add tickets"
                     });
                 }
+                newTicket.verificationStatus = "pending"; // 🔴 IMPORTANT
+                newTicket.status = "active";
+                newTicket.createdAt = new Date();
+                newTicket.vendorEmail = req.decoded_email;
+
 
                 // Insert ticket
                 const result = await ticketsCollection.insertOne(newTicket);
@@ -323,12 +428,31 @@ async function run() {
                 });
             }
         });
+         // Latest Tickets (6–8 recent)
+        app.get('/tickets/latest', async (req, res) => {
+            try {
+                const tickets = await ticketsCollection
+                    .find({
+                        verificationStatus: "approved",
+                        status: { $in: ["active", null] }
+                    })
+                    .sort({ createdAt: -1, _id: -1 })
+                    .limit(6)
+                    .toArray();
+
+                res.json(tickets);
+            } catch (err) {
+                console.error("Latest tickets error:", err);
+                res.status(500).json({ error: err.message });
+            }
+        });
 
         app.get('/tickets', async (req, res) => {
             try {
-                const tickets = await ticketsCollection
-                    .find({ status: { $ne: "hidden" } }) // HIDE hidden tickets
-                    .toArray();
+                const tickets = await ticketsCollection.find({
+                    verificationStatus: "approved",   // ✅ ONLY approved
+                    status: { $ne: "hidden" }          // ✅ fraud vendor hide
+                }).toArray();
 
                 res.json({
                     success: true,
@@ -344,6 +468,7 @@ async function run() {
                 });
             }
         });
+
 
         //  specific ticket API
         app.get('/tickets/:id', async (req, res) => {
@@ -372,54 +497,84 @@ async function run() {
             }
         });
         // update ticket API
-        app.patch('/tickets/:id', async (req, res) => {
+        app.patch("/vendor/tickets/:id", verifyFBToken,verifyVendor, async (req, res) => {
             try {
                 const id = req.params.id;
+                const vendorEmail = req.decoded_email;
                 const updatedData = req.body;
 
-                // If departureDate or departureTime changes, rebuild full datetime
-                if (updatedData.departureDate && updatedData.departureTime) {
-                    updatedData.departureDateTime = new Date(`${updatedData.departureDate}T${updatedData.departureTime}:00`);
+                const ticket = await ticketsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
+
+                if (!ticket) {
+                    return res.status(404).json({ message: "Ticket not found" });
                 }
 
-                const result = await ticketsCollection.updateOne(
+                // 🔐 only owner vendor
+                if (ticket.vendorEmail !== vendorEmail) {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                // ❌ rejected ticket lock
+                if (ticket.verificationStatus === "rejected") {
+                    return res.status(400).json({
+                        message: "Rejected ticket cannot be updated"
+                    });
+                }
+
+                // rebuild datetime if needed
+                if (updatedData.departureDate && updatedData.departureTime) {
+                    updatedData.departureDateTime = new Date(
+                        `${updatedData.departureDate}T${updatedData.departureTime}:00`
+                    );
+                }
+
+                // 🔄 update করলে আবার admin approve লাগবে
+                updatedData.verificationStatus = "pending";
+
+                await ticketsCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: updatedData }
                 );
 
-                if (result.matchedCount === 0) {
-                    return res.status(404).json({
-                        success: false,
-                        message: "Ticket not found"
-                    });
-                }
-
                 res.json({
                     success: true,
-                    message: "Ticket updated successfully"
+                    message: "Ticket updated, waiting for admin approval"
                 });
 
             } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    message: "Failed to update ticket",
-                    error: error.message
-                });
+                res.status(500).json({ error: error.message });
             }
         });
+
         //  Delete ticket API
-        app.delete('/tickets/:id', async (req, res) => {
+        app.delete("/vendor/tickets/:id", verifyFBToken,verifyVendor, async (req, res) => {
             try {
                 const id = req.params.id;
+                const vendorEmail = req.decoded_email;
 
-                const result = await ticketsCollection.deleteOne({ _id: new ObjectId(id) });
+                const ticket = await ticketsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
 
-                if (result.deletedCount === 0) {
-                    return res.status(404).json({
-                        success: false,
-                        message: "Ticket not found"
+                if (!ticket) {
+                    return res.status(404).json({ message: "Ticket not found" });
+                }
+
+                if (ticket.vendorEmail !== vendorEmail) {
+                    return res.status(403).json({ message: "Forbidden access" });
+                }
+
+                if (ticket.verificationStatus === "rejected") {
+                    return res.status(400).json({
+                        message: "Rejected ticket cannot be deleted"
                     });
                 }
+
+                await ticketsCollection.deleteOne({
+                    _id: new ObjectId(id)
+                });
 
                 res.json({
                     success: true,
@@ -427,13 +582,10 @@ async function run() {
                 });
 
             } catch (error) {
-                res.status(500).json({
-                    success: false,
-                    message: "Failed to delete ticket",
-                    error: error.message
-                });
+                res.status(500).json({ error: error.message });
             }
         });
+
         // ticket Booking related APIs
         app.get('/bookings', async (req, res) => {
             const { userEmail } = req.query;
@@ -512,7 +664,7 @@ async function run() {
         });
         // Vendor related APIs can be added here
         // GET vendor requested bookings
-        app.get("/vendor/bookings",verifyFBToken, async (req, res) => {
+        app.get("/vendor/bookings", verifyFBToken,verifyVendor, async (req, res) => {
             try {
                 const vendorEmail = req.query.vendorEmail;
 
@@ -641,6 +793,33 @@ async function run() {
 
             res.send({ url: session.url });
         });
+
+        // Admin ticket manage related APIs 
+        // Admin - get all tickets
+        app.get("/admin/tickets", verifyFBToken, verifyAdmin, async (req, res) => {
+            const tickets = await ticketsCollection.find().toArray();
+            res.send(tickets);
+        });
+
+        // Approve ticket
+        app.patch("/tickets/approve/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+            await ticketsCollection.updateOne(
+                { _id: new ObjectId(req.params.id) },
+                { $set: { verificationStatus: "approved" } }
+            );
+            res.send({ success: true });
+        });
+
+        // Reject ticket
+        app.patch("/tickets/reject/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+            await ticketsCollection.updateOne(
+                { _id: new ObjectId(req.params.id) },
+                { $set: { verificationStatus: "rejected" } }
+            );
+            res.send({ success: true });
+        });
+       
+
 
 
 
