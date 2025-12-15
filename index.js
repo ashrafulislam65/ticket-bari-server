@@ -6,7 +6,11 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const port = process.env.PORT || 3000
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./ticket-bari-firebase-adminsdk-fbsvc.json");
+
+// const serviceAccount = require("./firebase-admin-key.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -97,7 +101,7 @@ async function run() {
                     isAdvertised: true
                 });
 
-                // ❌ limit exceeded
+                //  limit exceeded
                 if (advertise === true && advertisedCount >= 6) {
                     return res.status(400).json({
                         success: false,
@@ -294,9 +298,9 @@ async function run() {
             res.send(result);
         });
 
-        // ==========================================
+        
         // GET All Vendor Requests (Only Admin Access)
-        // ==========================================
+        
         app.get("/vendor-request", verifyFBToken, async (req, res) => {
             try {
                 const email = req.decoded_email;
@@ -332,7 +336,7 @@ async function run() {
 
 
         // user related APIs
-        // ========== GET All Users (Admin Only) ==========
+        // GET All Users (Admin Only) 
         app.get("/users", verifyFBToken, async (req, res) => {
             try {
                 const email = req.decoded_email;
@@ -405,7 +409,7 @@ async function run() {
                         message: "Only vendors can add tickets"
                     });
                 }
-                newTicket.verificationStatus = "pending"; // 🔴 IMPORTANT
+                newTicket.verificationStatus = "pending"; 
                 newTicket.status = "active";
                 newTicket.createdAt = new Date();
                 newTicket.vendorEmail = req.decoded_email;
@@ -450,8 +454,8 @@ async function run() {
         app.get('/tickets', async (req, res) => {
             try {
                 const tickets = await ticketsCollection.find({
-                    verificationStatus: "approved",   // ✅ ONLY approved
-                    status: { $ne: "hidden" }          // ✅ fraud vendor hide
+                    verificationStatus: "approved",   // ONLY approved
+                    status: { $ne: "hidden" }          //  fraud vendor hide
                 }).toArray();
 
                 res.json({
@@ -511,12 +515,12 @@ async function run() {
                     return res.status(404).json({ message: "Ticket not found" });
                 }
 
-                // 🔐 only owner vendor
+                //  only owner vendor
                 if (ticket.vendorEmail !== vendorEmail) {
                     return res.status(403).json({ message: "Forbidden access" });
                 }
 
-                // ❌ rejected ticket lock
+                // rejected ticket lock
                 if (ticket.verificationStatus === "rejected") {
                     return res.status(400).json({
                         message: "Rejected ticket cannot be updated"
@@ -530,7 +534,7 @@ async function run() {
                     );
                 }
 
-                // 🔄 update করলে আবার admin approve লাগবে
+                
                 updatedData.verificationStatus = "pending";
 
                 await ticketsCollection.updateOne(
@@ -635,10 +639,10 @@ async function run() {
                 from: ticket.from,
                 to: ticket.to,
 
-                // FIXED 🚀 Save full schedule
+                
                 departureDate: ticket.departureDate,
                 departureTime: ticket.departureTime,
-                departureDateTime, // saved as ISO date
+                departureDateTime, 
 
                 price: ticket.price,
                 quantity,
@@ -650,7 +654,7 @@ async function run() {
 
             const bookingResult = await bookingsCollection.insertOne(newBooking);
 
-            // 5. Reduce ticket quantity
+            
             await ticketsCollection.updateOne(
                 { _id: new ObjectId(ticketId) },
                 { $inc: { quantity: -quantity } }
@@ -834,13 +838,12 @@ async function run() {
                 const bookingId = session.metadata.bookingId;
                 const ticketTitle = session.metadata.ticketTitle;
 
-                // 1. Update Booking Status
                 await bookingsCollection.updateOne(
                     { _id: new ObjectId(bookingId) },
                     { $set: { status: "paid" } }
                 );
 
-                // 2. Save Transaction History
+                
                 const paymentData = {
                     transactionId: session.payment_intent,
                     amount: session.amount_total / 100,
@@ -870,18 +873,18 @@ async function run() {
         app.get("/payments", verifyFBToken, async (req, res) => {
             const { email } = req.query;
 
-            // 1️⃣ Must include email
+            //  Must include email
             if (!email) {
                 return res.status(400).json({ message: "email is required" });
             }
 
-            // 2️⃣ Must match Firebase decoded email
+            //  Must match Firebase decoded email
             if (email !== req.decoded_email) {
                 return res.status(403).send({ message: "forbidden access" });
             }
 
             try {
-                // 3️⃣ Fetch only current user payments
+                // Fetch only current user payments
                 const payments = await paymentsCollection
                     .find({ userEmail: email })
                     .sort({ date: -1 })
@@ -902,8 +905,8 @@ async function run() {
         // FTWgCKOuqsDWy9Af
         // ticket_bari_user
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
