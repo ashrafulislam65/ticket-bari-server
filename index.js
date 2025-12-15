@@ -53,7 +53,7 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
 
 
         const db = client.db('ticket_bari_DB');
@@ -638,7 +638,7 @@ async function run() {
                 transport: ticket.transport,
                 from: ticket.from,
                 to: ticket.to,
-
+                image: ticket.image,
                 
                 departureDate: ticket.departureDate,
                 departureTime: ticket.departureTime,
